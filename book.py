@@ -44,7 +44,7 @@ from telegram import ( Update, InlineKeyboardButton, InlineKeyboardMarkup, Input
 
 ---------- CONFIGURATION ----------
 
-BOT_TOKEN = "REPLACE_WITH_YOUR_BOT_TOKEN" ADMIN_ID = 123456789  # REPLACE_WITH_ADMIN_TELEGRAM_ID (int) DB_PATH = "bookstore.db"
+BOT_TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE" ADMIN_ID = 6944519938  # REPLACE_WITH_ADMIN_TELEGRAM_ID (int) DB_PATH = "bookstore.db"
 
 Conversation states for /add, /setupi, /setqr
 
