@@ -1,322 +1,210 @@
-# 📚 Telegram Book Store Bot v3 — by Dev + ChatGPT
-# Full Featured Book Shop (Admin + User Flow + Payment Approval)
-# Requirements:
-# pip install python-telegram-bot==20.5 nest_asyncio
+import logging, json, os, html
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-import os, sqlite3, asyncio, nest_asyncio
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-)
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
-)
-
-nest_asyncio.apply()
-
-# =========================
-# CONFIGURATION
-# =========================
+# ---------------- CONFIG ----------------
+ADMIN_ID = 6944519938  # Replace with your numeric Telegram ID
 TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE"
-ADMIN_ID = 6944519938
-LOG_GROUP_ID = -1002760355837 # Group for logs
-DB_FILE = "bookstore.db"
+DATA_FILE = "books_data.json"
 
-# =========================
-# DATABASE
-# =========================
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.execute('''CREATE TABLE IF NOT EXISTS books (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        price_inr TEXT,
-        price_usd TEXT,
-        cover_path TEXT,
-        file_path TEXT
-    )''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )''')
-    conn.commit()
-    conn.close()
+# ---------------- LOGGING ----------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-def db_execute(query, params=(), fetch=False):
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.execute(query, params)
-    data = cur.fetchall() if fetch else None
-    conn.commit()
-    conn.close()
-    return data
+# ---------------- DATA ----------------
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        DATA = json.load(f)
+else:
+    DATA = {"books": {}, "upi": "", "qr": "", "pending": {}, "upload_step": {}}
 
-# =========================
-# ADMIN SETTINGS
-# =========================
-def set_setting(key, value):
-    db_execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(DATA, f, indent=2)
 
-def get_setting(key):
-    data = db_execute("SELECT value FROM settings WHERE key=?", (key,), True)
-    return data[0][0] if data else None
-
-# =========================
-# COMMANDS
-# =========================
+# ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    buttons = [
-        [InlineKeyboardButton("📚 Books", callback_data="view_books")],
-        [InlineKeyboardButton("👤 User Commands", callback_data="user_cmds")],
-    ]
-    if user.id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("👮 Admin Commands", callback_data="admin_cmds")])
-    buttons.append([InlineKeyboardButton("📩 Contact Admin", url=f"tg://user?id={ADMIN_ID}")])
-    markup = InlineKeyboardMarkup(buttons)
+    keyboard = [[InlineKeyboardButton("📚 Books", callback_data="show_books")]]
     await update.message.reply_text(
-        "📚 *Welcome to Dev’s Book Store!*\nChoose an option below 👇",
-        parse_mode="Markdown", reply_markup=markup
+        "👋 Welcome to *Book Store Bot!*\nBrowse and buy books! 📖",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# --- Admin command panels ---
-async def admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.from_user.id != ADMIN_ID:
-        await q.message.reply_text("❌ You are not admin.")
-        return
-    txt = (
-        "👮 *Admin Commands:*\n\n"
-        "/addbook <name> | <INR> | <$>\n"
-        "/setbook <book_id> (then send cover)\n"
-        "/uploadbook <book_id> (then send file)\n"
-        "/setqr (upload QR)\n"
-        "/setupi <upi_id>\n"
-        "/books - list all books"
-    )
-    await q.message.reply_text(txt, parse_mode="Markdown")
-
-async def user_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    txt = (
-        "👤 *User Commands:*\n\n"
-        "/start - main menu\n"
-        "/books - view all books\n"
-        "Use buttons to buy books"
-    )
-    await q.message.reply_text(txt, parse_mode="Markdown")
-
-# --- Add book ---
 async def addbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ Only admin can add books.")
-    try:
-        data = " ".join(context.args)
-        name, inr, usd = [x.strip() for x in data.split("|")]
-        db_execute("INSERT INTO books (name, price_inr, price_usd) VALUES (?,?,?)", (name, inr, usd))
-        await update.message.reply_text(f"✅ Added: {name}\n💰 INR {inr} | ${usd}")
-    except:
-        await update.message.reply_text("⚠️ Format: /addbook Book Name | 299 | $4")
+        await update.message.reply_text("🚫 Not authorized")
+        return
+    if len(context.args)<3:
+        await update.message.reply_text("Usage: /addbook <Name> <Price> <Cover_URL or none>", parse_mode="Markdown")
+        return
+    name = context.args[0]
+    price = context.args[1]
+    cover = " ".join(context.args[2:])
+    if cover.lower()=="none":
+        cover=None
+    DATA["books"][name]={"price":price,"cover":cover,"file":None}
+    DATA["upload_step"][str(update.effective_user.id)] = name
+    save_data()
+    await update.message.reply_text(f"✅ Book *{name}* added! Now send the book file (PDF/EPUB/MOBI) for this book.", parse_mode="Markdown")
 
-# --- Set cover ---
-async def setbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    if user_id not in DATA["upload_step"]:
         return
-    if not context.args:
-        await update.message.reply_text("Usage: /setbook <book_id>")
-        return
-    context.user_data["set_cover_id"] = int(context.args[0])
-    await update.message.reply_text("📸 Send the cover image now...")
+    book_name = DATA["upload_step"][user_id]
+    if update.message.document:
+        DATA["books"][book_name]["file"] = update.message.document.file_id
+        DATA["upload_step"].pop(user_id)
+        save_data()
+        await update.message.reply_text(f"✅ File for *{book_name}* uploaded successfully!", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("⚠️ Send a valid file.")
 
-# --- Upload file ---
-async def uploadbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /uploadbook <book_id>")
-        return
-    context.user_data["upload_file_id"] = int(context.args[0])
-    await update.message.reply_text("📁 Send the book file (PDF/ZIP/EPUB etc)...")
-
-# --- Set QR ---
-async def setqr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    context.user_data["awaiting_qr"] = True
-    await update.message.reply_text("📷 Send the payment QR image...")
-
-# --- Set UPI ---
 async def setupi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 Not authorized")
         return
-    upi = " ".join(context.args)
-    set_setting("upi_id", upi)
-    await update.message.reply_text(f"✅ UPI ID set: {upi}")
-
-# --- Handle media from admin (QR, cover, file) ---
-async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_ID:
+    if not context.args:
+        await update.message.reply_text("Usage: /setupi <UPI_ID>", parse_mode="Markdown")
         return
+    DATA["upi"]=context.args[0]
+    save_data()
+    await update.message.reply_text(f"✅ UPI set to `{DATA['upi']}`", parse_mode="Markdown")
 
-    if "awaiting_qr" in context.user_data:
-        file = await update.message.photo[-1].get_file()
-        path = f"qr.png"
-        await file.download_to_drive(path)
-        set_setting("qr_path", path)
-        del context.user_data["awaiting_qr"]
-        await update.message.reply_text("✅ QR updated successfully!")
+async def setqr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 Not authorized")
         return
-
-    if "set_cover_id" in context.user_data:
-        book_id = context.user_data.pop("set_cover_id")
-        file = await update.message.photo[-1].get_file()
-        path = f"cover_{book_id}.jpg"
-        await file.download_to_drive(path)
-        db_execute("UPDATE books SET cover_path=? WHERE id=?", (path, book_id))
-        await update.message.reply_text("✅ Cover saved!")
+    if not context.args:
+        await update.message.reply_text("Usage: /setqr <QR_URL>", parse_mode="Markdown")
         return
+    DATA["qr"]=" ".join(context.args)
+    save_data()
+    await update.message.reply_text("✅ QR set successfully")
 
-    if "upload_file_id" in context.user_data:
-        book_id = context.user_data.pop("upload_file_id")
-        file = await update.message.document.get_file()
-        path = f"book_{book_id}_{update.message.document.file_name}"
-        await file.download_to_drive(path)
-        db_execute("UPDATE books SET file_path=? WHERE id=?", (path, book_id))
-        await update.message.reply_text("✅ File uploaded successfully!")
+async def list_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not DATA["books"]:
+        await update.message.reply_text("❌ No books yet")
         return
+    text="*📚 Book List:*\n"
+    for name,info in DATA["books"].items():
+        text+=f"• *{html.escape(name)}* — ₹{info['price']}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- View all books list ---
-async def books_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    books = db_execute("SELECT id,name FROM books", fetch=True)
+async def show_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query
+    await query.answer()
+    books=DATA["books"]
     if not books:
-        await update.message.reply_text("📚 No books available.")
+        await query.edit_message_text("❌ No books yet")
         return
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"book_{bid}")] for bid, name in books]
-    markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📖 *Select a Book:*", parse_mode="Markdown", reply_markup=markup)
+    buttons=[[InlineKeyboardButton(name, callback_data=f"book_{name}")] for name in books.keys()]
+    await query.edit_message_text("📚 *Available Books:*",parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(buttons))
 
-# --- Handle inline clicks ---
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
+async def book_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query
+    await query.answer()
+    book_name=query.data.split("_",1)[1]
+    book=DATA["books"].get(book_name)
+    if not book:
+        await query.message.reply_text("❌ Book not found!")
+        return
+    caption=f"*{html.escape(book_name)}*\n💰 Price: ₹{book['price']}\n\nClick below to buy 👇"
+    buttons=[[InlineKeyboardButton("🛒 Buy Now",callback_data=f"buy_{book_name}")]]
+    if book.get("cover"):
+        await query.message.reply_photo(photo=book["cover"],caption=caption,parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await query.message.reply_text(caption,parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(buttons))
 
-    if data == "view_books":
-        books = db_execute("SELECT id,name FROM books", fetch=True)
-        if not books:
-            await q.message.reply_text("📚 No books yet.")
+async def buy_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query
+    await query.answer()
+    book_name=query.data.split("_",1)[1]
+    book=DATA["books"].get(book_name)
+    if not book:
+        await query.message.reply_text("❌ Book not found!")
+        return
+    upi=DATA.get("upi","")
+    qr=DATA.get("qr","")
+    msg=f"📖 *{html.escape(book_name)}*\n💰 Price: ₹{book['price']}\n\n"
+    if upi:
+        msg+=f"📤 Pay via UPI:\n`{upi}`\n\n"
+    else:
+        msg+="⚠️ UPI not set yet\n"
+    msg+="After payment, send payment screenshot here. Admin will approve and deliver book ✅"
+    DATA["pending"][str(query.from_user.id)]=book_name
+    save_data()
+    if qr:
+        await query.message.reply_photo(photo=qr,caption=msg,parse_mode="Markdown")
+    else:
+        await query.message.reply_text(msg,parse_mode="Markdown")
+
+async def payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id=str(update.effective_user.id)
+    if user_id in DATA["pending"]:
+        book_name=DATA["pending"][user_id]
+        if update.message.photo:
+            file_id=update.message.photo[-1].file_id
+        elif update.message.document:
+            file_id=update.message.document.file_id
+        else:
+            await update.message.reply_text("⚠️ Send photo or document as proof")
             return
-        keyboard = [[InlineKeyboardButton(name, callback_data=f"book_{bid}")] for bid, name in books]
-        await q.message.reply_text("📖 *Select a Book:*", parse_mode="Markdown",
-                                   reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_message(chat_id=ADMIN_ID,text=f"💳 Payment proof from {update.effective_user.first_name} for *{book_name}*",parse_mode="Markdown")
+        if update.message.photo or update.message.document:
+            await context.bot.send_photo(chat_id=ADMIN_ID,photo=file_id)
+        await update.message.reply_text("✅ Payment proof sent to admin. Wait for approval.")
+    else:
+        await update.message.reply_text("⚠️ No pending book purchase found.")
+
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!=ADMIN_ID:
+        await update.message.reply_text("🚫 Not authorized")
         return
-
-    if data == "admin_cmds":
-        return await admin_cmds(update, context)
-
-    if data == "user_cmds":
-        return await user_cmds(update, context)
-
-    if data.startswith("book_"):
-        bid = int(data.split("_")[1])
-        book = db_execute("SELECT name,price_inr,price_usd,cover_path FROM books WHERE id=?", (bid,), True)[0]
-        name, inr, usd, cover = book
-        caption = f"📖 *{name}*\n💵 INR {inr} | ${usd}"
-        keyboard = [[InlineKeyboardButton("💰 Buy", callback_data=f"buy_{bid}")]]
-        if cover and os.path.exists(cover):
-            await q.message.reply_photo(InputFile(cover), caption=caption, parse_mode="Markdown",
-                                        reply_markup=InlineKeyboardMarkup(keyboard))
+    if len(context.args)<1:
+        await update.message.reply_text("Usage: /approve <user_id>")
+        return
+    user_id=context.args[0]
+    if user_id in DATA["pending"]:
+        book_name=DATA["pending"][user_id]
+        book=DATA["books"].get(book_name)
+        if book and book.get("file"):
+            await context.bot.send_document(chat_id=int(user_id),document=book["file"],caption=f"📖 Here is your book *{book_name}*",parse_mode="Markdown")
+            DATA["pending"].pop(user_id)
+            save_data()
+            await update.message.reply_text(f"✅ Delivered *{book_name}* to user {user_id}",parse_mode="Markdown")
         else:
-            await q.message.reply_text(caption, parse_mode="Markdown",
-                                       reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+            await update.message.reply_text("❌ Book file not uploaded yet")
+    else:
+        await update.message.reply_text("❌ No pending request for this user")
 
-    if data.startswith("buy_"):
-        bid = int(data.split("_")[1])
-        qr = get_setting("qr_path")
-        upi = get_setting("upi_id") or "Not set"
-        if qr and os.path.exists(qr):
-            await q.message.reply_photo(
-                InputFile(qr),
-                caption=f"💰 *Payment Info:*\nUPI: `{upi}`\n\nSend payment screenshot here after paying.",
-                parse_mode="Markdown"
-            )
-        else:
-            await q.message.reply_text(f"💰 UPI: `{upi}`\n\nSend payment screenshot here after paying.",
-                                       parse_mode="Markdown")
-        context.user_data["await_ss_book"] = bid
-        return
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query
+    await query.answer()
+    data=query.data
+    if data=="show_books":
+        await show_books(update,context)
+    elif data.startswith("book_"):
+        await book_details(update,context)
+    elif data.startswith("buy_"):
+        await buy_book(update,context)
 
-# --- Handle payment screenshot from user ---
-async def handle_ss(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if "await_ss_book" not in context.user_data:
-        return
-    bid = context.user_data.pop("await_ss_book")
-    book = db_execute("SELECT name FROM books WHERE id=?", (bid,), True)[0][0]
-
-    file = await update.message.photo[-1].get_file()
-    ss_path = f"ss_{user.id}_{bid}.jpg"
-    await file.download_to_drive(ss_path)
-
-    # Send to admin for approval
-    kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user.id}_{bid}_{ss_path}")]]
-    await update.get_bot().send_photo(
-        ADMIN_ID, photo=InputFile(ss_path),
-        caption=f"📩 *New Payment*\n👤 {user.full_name}\n📖 {book}",
-        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
-    )
-    await update.message.reply_text("✅ Payment screenshot sent! Waiting for approval.")
-
-# --- Approve payment ---
-async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data.split("_")
-    if q.from_user.id != ADMIN_ID:
-        return
-    uid, bid = int(data[1]), int(data[2])
-    book = db_execute("SELECT name,file_path FROM books WHERE id=?", (bid,), True)[0]
-    name, fpath = book
-    await context.bot.send_message(uid, f"✅ Payment approved!\n📚 Here’s your book: *{name}*", parse_mode="Markdown")
-    if fpath and os.path.exists(fpath):
-        await context.bot.send_document(uid, InputFile(fpath))
-
-    # Send logs
-    await context.bot.send_message(LOG_GROUP_ID,
-        f"🧾 *Order Log*\n👤 User ID: {uid}\n📖 Book: {name}\n✅ Approved by Admin",
-        parse_mode="Markdown"
-    )
-
-    await q.message.reply_text("✅ Approved and sent!")
-
-# =========================
-# MAIN
-# =========================
-async def main():
-    init_db()
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addbook", addbook))
-    app.add_handler(CommandHandler("setbook", setbook))
-    app.add_handler(CommandHandler("uploadbook", uploadbook))
-    app.add_handler(CommandHandler("setqr", setqr))
-    app.add_handler(CommandHandler("setupi", setupi))
-    app.add_handler(CommandHandler("books", books_list))
-
+def main():
+    print("🤖 Full Book Store Bot running...")
+    app=ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start",start))
+    app.add_handler(CommandHandler("addbook",addbook))
+    app.add_handler(MessageHandler(filters.Document.ALL,receive_file))
+    app.add_handler(CommandHandler("setupi",setupi))
+    app.add_handler(CommandHandler("setqr",setqr))
+    app.add_handler(CommandHandler("books",list_books))
+    app.add_handler(CommandHandler("approve",approve))
+    app.add_handler(MessageHandler(filters.PHOTO, payment_proof))
     app.add_handler(CallbackQueryHandler(button_click))
-    app.add_handler(CallbackQueryHandler(approve_payment, pattern="approve_"))
+    app.run_polling()
 
-    app.add_handler(MessageHandler(filters.PHOTO & filters.User(ADMIN_ID), handle_media))
-    app.add_handler(MessageHandler(filters.PHOTO & ~filters.User(ADMIN_ID), handle_ss))
-
-    print("🤖 Book Store Bot v3 running...")
-    await app.run_polling()
-
-if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
+if __name__=="__main__":
+    main()
