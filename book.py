@@ -41,9 +41,7 @@ Note: This is a single-file example and uses sqlite3 for persistence.
 import logging 
 import sqlite3
 import os 
-from datetime
-import datetime 
-from functools 
+import datetime from functools 
 import wraps from telegram
 import ( Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ChatAction, ) from telegram.ext 
 import ( ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, ConversationHandler, )
