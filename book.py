@@ -6,19 +6,20 @@ from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup 
 from telegram.ext import ( ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, ConversationHandler )
 
----------- CONFIGURATION ----------
+#---------- CONFIGURATION ----------
 
-BOT_TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE" ADMIN_ID = 6944519938 DB_PATH = "bookstore.db"
+BOT_TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE" 
+ADMIN_ID = 6944519938 DB_PATH = "bookstore.db"
 
-Conversation states
+#Conversation states
 
 ADD_LANG, ADD_NAME, ADD_PRICE, ADD_COVER, ADD_FILE = range(5) SETUPI_WAIT, SETQR_WAIT = range(10, 12)
 
----------- LOGGING ----------
+#---------- LOGGING ----------
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO) logger = logging.getLogger(name)
 
----------- DB HELPERS ----------
+#---------- DB HELPERS ----------
 
 def init_db(): conn = sqlite3.connect(DB_PATH) cur = conn.cursor() cur.execute('''CREATE TABLE IF NOT EXISTS books (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, lang TEXT NOT NULL, price REAL NOT NULL, file_id TEXT NOT NULL, cover_file_id TEXT)''') cur.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, registered_at TEXT, purchased_count INTEGER DEFAULT 0)''') cur.execute('''CREATE TABLE IF NOT EXISTS purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, book_id INTEGER, status TEXT, created_at TEXT, proof_file_id TEXT)''') cur.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''') conn.commit() conn.close()
 
@@ -48,17 +49,17 @@ def set_setting(key, value): conn = sqlite3.connect(DB_PATH) cur = conn.cursor()
 
 def get_setting(key): conn = sqlite3.connect(DB_PATH) cur = conn.cursor() cur.execute("SELECT value FROM settings WHERE key = ?", (key,)) row = cur.fetchone() conn.close() return row[0] if row else None
 
----------- DECORATORS ----------
+#---------- DECORATORS ----------
 
 def admin_only(func): @wraps(func) async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE): if update.effective_user.id != ADMIN_ID: await update.effective_message.reply_text("Sirf admin use kar sakta hai.") return return await func(update, context) return wrapper
 
----------- HANDLERS ----------
+#---------- HANDLERS ----------
 
 Here you would implement start_handler, callback_query_handler, buy_command, incoming_file_handler, setupi_command, setqr_command, add_command and its steps, cancel_handler, setbook_command
 
 For brevity, include the logic as in your previous working code with correct syntax and imports.
 
----------- MAIN ----------
+#---------- MAIN ----------
 
 def main(): init_db() app = ApplicationBuilder().token(BOT_TOKEN).build()
 
