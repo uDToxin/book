@@ -38,17 +38,28 @@ Note: This is a single-file example and uses sqlite3 for persistence.
 
 """
 
-import logging import sqlite3 import os from datetime import datetime from functools import wraps
-
-from telegram import ( Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ChatAction, ) from telegram.ext import ( ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, ConversationHandler, )
+import logging 
+import sqlite3
+import os from datetime
+import datetime from functools 
+import wraps from telegram
+import ( Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ChatAction, ) from telegram.ext 
+import ( ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler, ConversationHandler, )
 
 ---------- CONFIGURATION ----------
 
-BOT_TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE" ADMIN_ID = 6944519938  # REPLACE_WITH_ADMIN_TELEGRAM_ID (int) DB_PATH = "bookstore.db"
+BOT_TOKEN = "8094733589:AAGYPT_O8oE0eBGPt-LvaHfpQQNE5xyB-lE"
+ADMIN_ID = 6944519938  # REPLACE_WITH_ADMIN_TELEGRAM_ID (int) DB_PATH = "bookstore.db"
 
 Conversation states for /add, /setupi, /setqr
 
-ADD_LANG, ADD_NAME, ADD_PRICE, ADD_COVER, ADD_FILE = range(5) SETUPI_WAIT = 10 SETQR_WAIT = 11
+ADD_LANG,
+ADD_NAME, 
+ADD_PRICE, 
+ADD_COVER,
+ADD_FILE = range(5) 
+SETUPI_WAIT = 10 
+SETQR_WAIT = 11
 
 ---------- LOGGING ----------
 
