@@ -129,7 +129,7 @@ async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def addbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send book info in format:\nLanguage,Hindi/English\nTitle\nPrice\nAttach file (optional)")
+    await update.message.reply_text("Send book info in format:\nLanguage,Hindi/English,Title,Price\nAttach file (optional)")
 
 async def add_book_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -182,32 +182,45 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     order_id = str(uuid4())[:8]
     user = update.effective_user
-    await update.message.reply_text(f"💰 Pay to: `{upi}`\nOrder ID: `{order_id}`\nAfter payment, send screenshot with /pay {order_id}", parse_mode="Markdown")
+    await update.message.reply_text(f"💰 Pay to: `{upi}`\nOrder ID: `{order_id}`\nAfter payment, send screenshot here.", parse_mode="Markdown")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO orders(id,user_id,username,book_id,status,created_at,screenshot) VALUES(?,?,?,?,?,?,?)",
             (order_id, user.id, user.username, book[0], "pending", datetime.now().isoformat(), "")
         )
         await db.commit()
-    await context.bot.send_message(ADMIN_ID, f"💸 New order from {user.username}\nBook: {book_name}\nOrder ID: {order_id}")
+    await context.bot.send_message(ADMIN_ID, f"🛒 New order from {user.username}\nBook: {book_name}\nOrder ID: {order_id}")
 
-async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 1:
-        await update.message.reply_text("Usage: /pay <OrderID> (attach screenshot)")
-        return
-    order_id = context.args[0]
+# ===== SCREENSHOT HANDLER =====
+async def screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     if not update.message.photo:
-        await update.message.reply_text("Attach payment screenshot.")
+        await update.message.reply_text("Attach screenshot of payment.")
         return
-    photo_id = update.message.photo[-1].file_id
+    # Find latest pending order for user
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT id,book_id FROM orders WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1", (user.id,))
+        row = await cur.fetchone()
+        if not row:
+            await update.message.reply_text("No pending orders found.")
+            return
+        order_id, book_id = row
+        photo_id = update.message.photo[-1].file_id
         await db.execute("UPDATE orders SET screenshot=? WHERE id=?", (photo_id, order_id))
         await db.commit()
-    await update.message.reply_text("✅ Screenshot received, waiting for admin approval.")
-    await context.bot.send_message(ADMIN_ID, f"🖼 Payment screenshot received for order {order_id}", reply_markup=InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{order_id}")]]
-    ))
+        # Send to admin
+        cur = await db.execute("SELECT title FROM books WHERE id=?", (book_id,))
+        book = await cur.fetchone()
+    keyboard = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{order_id}")]]
+    await context.bot.send_photo(
+        ADMIN_ID,
+        photo=photo_id,
+        caption=f"💳 Payment screenshot from @{user.username}\nBook: {book[0]}\nOrder ID: {order_id}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    await update.message.reply_text("✅ Screenshot received. Waiting for admin approval.")
 
+# ===== APPROVE HANDLER =====
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -239,7 +252,7 @@ async def main():
     app.add_handler(CommandHandler("addbook", addbook))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, add_book_manual))
     app.add_handler(CommandHandler("buy", buy_command))
-    app.add_handler(CommandHandler("pay", pay_command))
+    app.add_handler(MessageHandler(filters.PHOTO, screenshot_handler))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(books|myinfo|lang_)"))
     app.add_handler(CallbackQueryHandler(approve_command, pattern="^approve_"))
 
