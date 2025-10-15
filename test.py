@@ -253,7 +253,8 @@ async def main():
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    await app.idle()
+    # Keep the bot running
+    await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
     import asyncio
