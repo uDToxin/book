@@ -13,22 +13,23 @@ from telegram.ext import (
     filters,
 )
 import nest_asyncio
+nest_asyncio.apply()
 
-# ========== CONFIG ==========
+# ===== CONFIG =====
 BOT_TOKEN = "8094733589:AAGg3nkrh8yT6w5C7ySbV7C54bE5n6lyeCg"
 ADMIN_ID = 6944519938  # Replace with your Telegram ID
 DB_PATH = "bookstore.db"
-nest_asyncio.apply()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== UTILITIES ==========
+# ===== UTILITIES =====
 def admin_only(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if user_id != ADMIN_ID:
-            await update.message.reply_text("❌ This command is only for admin.")
+            await update.effective_message.reply_text("❌ This command is only for admin.")
             return
         return await func(update, context)
     return wrapper
@@ -87,7 +88,7 @@ async def get_all_books(lang=None):
             cur = await db.execute("SELECT title,price FROM books")
         return await cur.fetchall()
 
-# ========== COMMANDS ==========
+# ===== COMMANDS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📚 Books", callback_data="books")],
@@ -98,8 +99,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+async def myinfo(update, context):
+    if hasattr(update, "callback_query") and update.callback_query:
+        user = update.callback_query.from_user
+    else:
+        user = update.effective_user
+    user_id = user.id
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=?", (user_id,))
         total = (await cur.fetchone())[0]
@@ -107,9 +112,11 @@ async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         approved = (await cur.fetchone())[0]
         cur = await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=? AND status='pending'", (user_id,))
         pending = (await cur.fetchone())[0]
-    await update.message.reply_text(
-        f"👤 Your Info:\nTotal Orders: {total}\nApproved: {approved}\nPending: {pending}"
-    )
+    text = f"👤 Your Info:\nTotal Orders: {total}\nApproved: {approved}\nPending: {pending}"
+    if hasattr(update, "callback_query") and update.callback_query:
+        await update.callback_query.message.reply_text(text)
+    else:
+        await update.message.reply_text(text)
 
 @admin_only
 async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,9 +129,7 @@ async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def addbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = "Send book info in format:\nLanguage,Hindi/English\nTitle\nPrice (₹ or $)\nFile"
-    await update.message.reply_text(msg)
-    return
+    await update.message.reply_text("Send book info in format:\nLanguage,Hindi/English\nTitle\nPrice\nAttach file (optional)")
 
 async def add_book_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -141,7 +146,7 @@ async def add_book_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("❌ Error adding book. Make sure format is correct.")
 
-# ========== CALLBACKS ==========
+# ===== CALLBACKS =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -160,7 +165,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "\nTo buy, use /buy <Book Name>"
         await q.message.reply_text(text, parse_mode="Markdown")
     elif q.data == "myinfo":
-        await myinfo(q.message, context)
+        await myinfo(update, context)
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
@@ -175,7 +180,6 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not upi:
         await update.message.reply_text("❌ Admin has not set up payment.")
         return
-
     order_id = str(uuid4())[:8]
     user = update.effective_user
     await update.message.reply_text(f"💰 Pay to: `{upi}`\nOrder ID: `{order_id}`\nAfter payment, send screenshot with /pay {order_id}", parse_mode="Markdown")
@@ -224,23 +228,26 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_document(user_id, book[1])
     await q.message.reply_text("✅ Approved!")
 
-# ========== MAIN ==========
+# ===== MAIN =====
 async def main():
     await init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myinfo", myinfo))
     app.add_handler(CommandHandler("setupi", setup_upi))
     app.add_handler(CommandHandler("addbook", addbook))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, add_book_manual))
     app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CommandHandler("pay", pay_command))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(books|myinfo|lang_)"))
     app.add_handler(CallbackQueryHandler(approve_command, pattern="^approve_"))
+
     print("🚀 Bot running...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    await asyncio.Future()  # Keep running
+    await asyncio.Future()  # keep running
 
 if __name__ == "__main__":
     import asyncio
