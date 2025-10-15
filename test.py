@@ -1,14 +1,9 @@
 import logging
 import aiosqlite
-import asyncio
 from datetime import datetime
 from functools import wraps
 from uuid import uuid4
-from telegram import (
-    Update,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -18,22 +13,23 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+import nest_asyncio
 
-# ================= CONFIG =================
-BOT_TOKEN = "8094733589:AAGg3nkrh8yT6w5C7ySbV7C54bE5n6lyeCg"  # <-- yahan apna bot token daalna
-ADMIN_ID = 6944519938               # <-- apna Telegram user id daalna (int)
+# ========= CONFIG =========
+BOT_TOKEN = "8094733589:AAGg3nkrh8yT6w5C7ySbV7C54bE5n6lyeCg"  # Your bot token
+ADMIN_ID = 6944519938  # Your Telegram ID as int
 DB_PATH = "bookstore.db"
-# ==========================================
+# ===========================
 
-# Conversation states
-(ADD_LANG, ADD_TITLE, ADD_PRICE, ADD_FILE) = range(4)
+nest_asyncio.apply()  # ✅ Fix event loop already running issues
 
-# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Conversation states
+ADD_LANG, ADD_TITLE, ADD_PRICE, ADD_FILE = range(4)
 
-# ================= UTILITIES =================
+# ========== UTILITIES ==========
 def admin_only(func):
     @wraps(func)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *a, **kw):
@@ -43,36 +39,31 @@ def admin_only(func):
         return await func(update, context, *a, **kw)
     return wrapped
 
-
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS books(
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                lang TEXT,
-                price TEXT,
-                file_id TEXT
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS books(
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            lang TEXT,
+            price TEXT,
+            file_id TEXT
+        )""")
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS orders(
-                id TEXT PRIMARY KEY,
-                user_id INTEGER,
-                user_name TEXT,
-                book_id TEXT,
-                status TEXT,
-                created_at TEXT
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS orders(
+            id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            user_name TEXT,
+            book_id TEXT,
+            status TEXT,
+            created_at TEXT
+        )""")
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS config(
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS config(
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )""")
         await db.commit()
-
 
 async def set_config(key, value):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -82,15 +73,13 @@ async def set_config(key, value):
         )
         await db.commit()
 
-
 async def get_config(key):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT value FROM config WHERE key=?", (key,))
         row = await cur.fetchone()
         return row[0] if row else None
 
-
-# ================= COMMANDS =================
+# ========== COMMANDS ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📚 Books", callback_data="books")],
@@ -102,7 +91,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-
+@admin_only
 async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         await update.message.reply_text("Use: /setupi your_upi@okbank")
@@ -111,12 +100,10 @@ async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await set_config("upi_id", upi)
     await update.message.reply_text(f"✅ UPI ID set to: `{upi}`", parse_mode="Markdown")
 
-
 @admin_only
 async def add_book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Add to which language? (Hindi / English)")
     return ADD_LANG
-
 
 async def add_book_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = update.message.text.strip().lower()
@@ -127,18 +114,15 @@ async def add_book_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Enter book title:")
     return ADD_TITLE
 
-
 async def add_book_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["title"] = update.message.text
     await update.message.reply_text("Enter book price (₹ or $):")
     return ADD_PRICE
 
-
 async def add_book_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["price"] = update.message.text
     await update.message.reply_text("Now send the book file (PDF, etc.) or type 'skip':")
     return ADD_FILE
-
 
 async def add_book_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = update.message.document.file_id if update.message.document else None
@@ -152,16 +136,13 @@ async def add_book_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Book added successfully!")
     return ConversationHandler.END
 
-
 async def skip_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await add_book_file(update, context)
 
-
-# ================= CALLBACKS =================
+# ========== CALLBACKS ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-
     if q.data == "books":
         langs = [
             [InlineKeyboardButton("📗 Hindi", callback_data="lang_hindi"),
@@ -220,7 +201,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
         )
 
-
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -244,8 +224,7 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_document(user_id, document=book[1])
     await q.message.reply_text("✅ Approved and file sent!")
 
-
-# ================= MAIN =================
+# ========== MAIN ==========
 async def main():
     await init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -270,14 +249,12 @@ async def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CallbackQueryHandler(approve_payment, pattern="^approve_"))
 
-    logger.info("🚀 Bot running...")
-    await app.run_polling()
-
+    print("🚀 Bot running without asyncio errors...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.idle()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
+    import asyncio
+    asyncio.run(main())
