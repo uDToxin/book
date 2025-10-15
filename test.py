@@ -40,7 +40,7 @@ async def init_db():
         )""")
         await db.commit()
 
-# ===== COMMANDS =====
+# ===== START COMMAND =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📚 Books", callback_data="books")],
@@ -83,7 +83,6 @@ async def addbook_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         data['file_id'] = update.message.document.file_id
         context.user_data['addbook'] = data
-        # Save to DB
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "INSERT INTO books(id,lang,title,price,file_id) VALUES(?,?,?,?,?)",
@@ -140,7 +139,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO orders(id,user_id,username,book_id,status,created_at,screenshot) VALUES(?,?,?,?,?,?,?)",
-            (order_id, user.id, user.username, book[0], "pending", datetime.now().isoformat(), "")
+            (order_id, user.id, user.username or "", book[0], "pending", datetime.now().isoformat(), "")
         )
         await db.commit()
     keyboard = [[InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{order_id}")]]
@@ -213,23 +212,4 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== MAIN =====
 async def main():
     await init_db()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addbook", addbook))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, addbook_steps))
-    app.add_handler(CommandHandler("buy", buy_command))
-    app.add_handler(MessageHandler(filters.PHOTO, screenshot_handler))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(books|myinfo|lang_)"))
-    app.add_handler(CallbackQueryHandler(paid_button, pattern="^paid_"))
-    app.add_handler(CallbackQueryHandler(approve_command, pattern="^approve_"))
-
-    print("🚀 Bot running...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Future()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    app = ApplicationBuilder().token(BOT_TOKEN
