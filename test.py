@@ -7,9 +7,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
-    CallbackQueryHandler,
     filters,
 )
 import nest_asyncio
@@ -41,7 +41,6 @@ async def init_db():
             id TEXT PRIMARY KEY,
             title TEXT,
             lang TEXT,
-            price TEXT,
             file_id TEXT
         )""")
         await db.execute("""
@@ -54,38 +53,19 @@ async def init_db():
             screenshot TEXT,
             created_at TEXT
         )""")
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS config(
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )""")
         await db.commit()
-
-async def set_config(key, value):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        await db.commit()
-
-async def get_config(key):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT value FROM config WHERE key=?", (key,))
-        row = await cur.fetchone()
-        return row[0] if row else None
 
 async def get_book_by_title(title):
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT id,title,price,file_id FROM books WHERE title=?", (title,))
+        cur = await db.execute("SELECT id,title,file_id FROM books WHERE title=?", (title,))
         return await cur.fetchone()
 
 async def get_all_books(lang=None):
     async with aiosqlite.connect(DB_PATH) as db:
         if lang:
-            cur = await db.execute("SELECT title,price FROM books WHERE lang=?", (lang,))
+            cur = await db.execute("SELECT title FROM books WHERE lang=?", (lang,))
         else:
-            cur = await db.execute("SELECT title,price FROM books")
+            cur = await db.execute("SELECT title FROM books")
         return await cur.fetchall()
 
 # ===== COMMANDS =====
@@ -100,10 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def myinfo(update, context):
-    if hasattr(update, "callback_query") and update.callback_query:
-        user = update.callback_query.from_user
-    else:
-        user = update.effective_user
+    user = update.effective_user
     user_id = user.id
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=?", (user_id,))
@@ -113,40 +90,27 @@ async def myinfo(update, context):
         cur = await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=? AND status='pending'", (user_id,))
         pending = (await cur.fetchone())[0]
     text = f"👤 Your Info:\nTotal Orders: {total}\nApproved: {approved}\nPending: {pending}"
-    if hasattr(update, "callback_query") and update.callback_query:
-        await update.callback_query.message.reply_text(text)
-    else:
-        await update.message.reply_text(text)
-
-@admin_only
-async def setup_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 1:
-        await update.message.reply_text("Usage: /setupi your_upi@okbank")
-        return
-    upi = context.args[0]
-    await set_config("upi_id", upi)
-    await update.message.reply_text(f"✅ UPI set to: {upi}")
+    await update.message.reply_text(text)
 
 @admin_only
 async def addbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send book info in format:\nLanguage,Hindi/English,Title,Price\nAttach file (optional)")
+    await update.message.reply_text("Send book info in format:\nLanguage,Hindi/English,Title\nAttach file (optional)")
 
 async def add_book_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(",")
-        lang, title, price = parts[0].strip().lower(), parts[1].strip(), parts[2].strip()
+        lang, title = parts[0].strip().lower(), parts[1].strip()
         file_id = update.message.document.file_id if update.message.document else None
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
-                "INSERT INTO books(id,title,lang,price,file_id) VALUES(?,?,?,?,?)",
-                (str(uuid4()), title, lang, price, file_id)
+                "INSERT INTO books(id,title,lang,file_id) VALUES(?,?,?,?)",
+                (str(uuid4()), title, lang, file_id)
             )
             await db.commit()
         await update.message.reply_text("✅ Book added successfully")
     except Exception as e:
         await update.message.reply_text("❌ Error adding book. Make sure format is correct.")
 
-# ===== CALLBACKS =====
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -161,7 +125,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         books = await get_all_books(lang)
         text = "📚 *Books List:*\n\n"
         for b in books:
-            text += f"{b[0]} - {b[1]}\n"
+            text += f"{b[0]}\n"
         text += "\nTo buy, use /buy <Book Name>"
         await q.message.reply_text(text, parse_mode="Markdown")
     elif q.data == "myinfo":
@@ -176,28 +140,29 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not book:
         await update.message.reply_text("❌ Book not found.")
         return
-    upi = await get_config("upi_id")
-    if not upi:
-        await update.message.reply_text("❌ Admin has not set up payment.")
-        return
-    order_id = str(uuid4())[:8]
     user = update.effective_user
-    await update.message.reply_text(f"💰 Pay to: `{upi}`\nOrder ID: `{order_id}`\nAfter payment, send screenshot here.", parse_mode="Markdown")
+    order_id = str(uuid4())[:8]
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT INTO orders(id,user_id,username,book_id,status,created_at,screenshot) VALUES(?,?,?,?,?,?,?)",
             (order_id, user.id, user.username, book[0], "pending", datetime.now().isoformat(), "")
         )
         await db.commit()
-    await context.bot.send_message(ADMIN_ID, f"🛒 New order from {user.username}\nBook: {book_name}\nOrder ID: {order_id}")
+    keyboard = [[InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{order_id}")]]
+    await update.message.reply_text("Click when you have paid:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# ===== SCREENSHOT HANDLER =====
+# ===== PAYMENT & SCREENSHOT =====
+async def paid_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    order_id = q.data.split("_")[1]
+    await q.message.reply_text("✅ Please send screenshot of your payment now.")
+
 async def screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not update.message.photo:
         await update.message.reply_text("Attach screenshot of payment.")
         return
-    # Find latest pending order for user
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT id,book_id FROM orders WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1", (user.id,))
         row = await cur.fetchone()
@@ -208,7 +173,6 @@ async def screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         photo_id = update.message.photo[-1].file_id
         await db.execute("UPDATE orders SET screenshot=? WHERE id=?", (photo_id, order_id))
         await db.commit()
-        # Send to admin
         cur = await db.execute("SELECT title FROM books WHERE id=?", (book_id,))
         book = await cur.fetchone()
     keyboard = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{order_id}")]]
@@ -220,7 +184,7 @@ async def screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     await update.message.reply_text("✅ Screenshot received. Waiting for admin approval.")
 
-# ===== APPROVE HANDLER =====
+# ===== APPROVE =====
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -236,7 +200,8 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db.commit()
         cur = await db.execute("SELECT title,file_id FROM books WHERE id=?", (book_id,))
         book = await cur.fetchone()
-    await context.bot.send_message(user_id, f"✅ Payment approved! Here’s your book: *{book[0]}*\nAdmin ID: {ADMIN_ID}", parse_mode="Markdown")
+    keyboard = [[InlineKeyboardButton("📖 Here is your book", url=f"tg://user?id={ADMIN_ID}")]]
+    await context.bot.send_message(user_id, f"✅ Thanks for your purchase!\nBook: *{book[0]}*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     if book[1]:
         await context.bot.send_document(user_id, book[1])
     await q.message.reply_text("✅ Approved!")
@@ -248,19 +213,19 @@ async def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myinfo", myinfo))
-    app.add_handler(CommandHandler("setupi", setup_upi))
     app.add_handler(CommandHandler("addbook", addbook))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, add_book_manual))
     app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(MessageHandler(filters.PHOTO, screenshot_handler))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(books|myinfo|lang_)"))
+    app.add_handler(CallbackQueryHandler(paid_button, pattern="^paid_"))
     app.add_handler(CallbackQueryHandler(approve_command, pattern="^approve_"))
 
     print("🚀 Bot running...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    await asyncio.Future()  # keep running
+    await asyncio.Future()
 
 if __name__ == "__main__":
     import asyncio
