@@ -24,7 +24,7 @@ from telegram.ext import (
 import asyncio
 
 # ---------------- CONFIG ----------------
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"   # <<--- REPLACE with your token (do NOT share token publicly)
+TOKEN = "8094733589:AAGg3nkrh8yT6w5C7ySbV7C54bE5n6lyeCg"   # <<--- REPLACE with your token (do NOT share token publicly)
 ADMIN_ID = 0                        # <<--- put your Telegram user id here (or run /setadmin to claim)
 DB_PATH = "books_bot.db"
 # ----------------------------------------
