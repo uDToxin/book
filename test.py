@@ -10,6 +10,7 @@ from telegram.ext import (
 import nest_asyncio
 nest_asyncio.apply()
 
+# ===== CONFIG =====
 BOT_TOKEN = "8094733589:AAGg3nkrh8yT6w5C7ySbV7C54bE5n6lyeCg"
 ADMIN_ID = 6944519938  # Replace with your Telegram ID
 DB_PATH = "bookstore.db"
@@ -40,7 +41,7 @@ async def init_db():
         )""")
         await db.commit()
 
-# ===== START COMMAND =====
+# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📚 Books", callback_data="books")],
@@ -51,15 +52,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ===== ADD BOOK (ADMIN) =====
+# ===== ADD BOOK =====
 async def addbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can use this command.")
         return
+    context.user_data['addbook'] = {}
     await update.message.reply_text(
         "Send book info step by step:\n1️⃣ Language (hindi/english)\n2️⃣ Title\n3️⃣ Price\n4️⃣ Attach file"
     )
-    context.user_data['addbook'] = {}
 
 async def addbook_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -212,4 +213,19 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== MAIN =====
 async def main():
     await init_db()
-    app = ApplicationBuilder().token(BOT_TOKEN
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("addbook", addbook))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, addbook_steps))
+    app.add_handler(CommandHandler("buy", buy_command))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(books|myinfo|lang_.*)$"))
+    app.add_handler(CallbackQueryHandler(paid_button, pattern="^paid_"))
+    app.add_handler(CallbackQueryHandler(approve_command, pattern="^approve_"))
+    app.add_handler(MessageHandler(filters.PHOTO, screenshot_handler))
+
+    print("🚀 Bot running...")
+    await app.run_polling()
+
+import asyncio
+asyncio.run(main())
